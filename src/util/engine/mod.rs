@@ -14,6 +14,11 @@ use util::file::{calc_crc32, copy_and_sync};
 
 pub use rocksdb::CFHandle;
 
+pub const LOCK_CF: &str = "lock";
+pub const DATA_CF: &str = "data";
+pub const WRITE_CF: &str = "write";
+
+
 // Zlib and bzip2 are too slow.
 const COMPRESSION_PRIORITY: [DBCompressionType; 3] = [
     DBCompressionType::Lz4,

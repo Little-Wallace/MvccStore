@@ -2,21 +2,22 @@
 /// Several kinds of mem-store
 ///
 
-use util::collection::HashMap;
+use super::super::util::collection::HashMap as Map;
 use super::{Key, Value};
+use std::cmp::Ordering;
 
 type V = (u64, Value);
 
 /// Hash table
 pub struct HashMemStore {
     // key -> (ts, value)
-    map: HashMap<Key, V>,
+    map: Map<Key, V>,
 }
 
 impl HashMemStore {
     pub fn new() -> Self {
         Self {
-            map: HashMap::default(),
+            map: Map::default(),
         }
     }
 
@@ -34,6 +35,10 @@ impl HashMemStore {
 
     pub fn get(&self, key: &Key) -> Option<&V> {
         self.map.get(key)
+    }
+    pub fn range_conflict(&self, start: &Key, end: &Key, ts: u64) -> bool {
+        // TODO:  check whether there is one key locked, which is between range [start,end].
+        return false;
     }
 }
 
