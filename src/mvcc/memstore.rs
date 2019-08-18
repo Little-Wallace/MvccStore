@@ -9,12 +9,12 @@ use std::cmp::Ordering;
 type V = (u64, Value);
 
 /// Hash table
-pub struct HashMemStore {
+pub struct MemStore {
     // key -> (ts, value)
     map: Map<Key, V>,
 }
 
-impl HashMemStore {
+impl MemStore {
     pub fn new() -> Self {
         Self {
             map: Map::default(),

@@ -8,9 +8,8 @@ use std::sync::Arc;
 use rocksdb::{
     ColumnFamilyOptions, DBCompressionType, DBOptions, Env, SliceTransform, DB, WriteOptions,
 };
-use storage::CF_DEFAULT;
-use sys_info;
-use util::file::{calc_crc32, copy_and_sync};
+use super::super::mvcc::CF_DEFAULT;
+// use util::file::{calc_crc32, copy_and_sync};
 
 pub use rocksdb::CFHandle;
 
@@ -71,33 +70,30 @@ fn check_and_open(
             if x.cf == CF_DEFAULT {
                 continue;
             }
-            db.create_cf((x.cf, x.options))?;
+            db.create_cf_opt(x.cf, x.options)?;
         }
 
         return Ok(db);
     }
-
-    db_opt.create_if_missing(false);
-
-    // Open db.
-    let mut cfs_v: Vec<&str> = Vec::new();
-    let mut cfs_opts_v: Vec<ColumnFamilyOptions> = Vec::new();
-    for cf in &existed {
-        cfs_v.push(cf);
-        match cfs_opts.iter().find(|x| x.cf == *cf) {
-            Some(x) => {
-                let mut tmp = CFOptions::new(x.cf, x.options.clone());
-                cfs_opts_v.push(tmp.options);
-            }
-            None => {
-                cfs_opts_v.push(ColumnFamilyOptions::new());
-            }
-        }
+//    db_opt.create_if_missing(false);
+//
+//    // Open db.
+    let mut cfs_v = Vec::new();
+//    let mut cfs_opts_v: Vec<ColumnFamilyOptions> = Vec::new();
+    for cf in cfs_opts.iter() {
+        cfs_v.push((cf.cf, cf.options.clone()));
+//        match cfs_opts.iter().find(|x| x.cf == *cf) {
+//            Some(x) => {
+//                let mut tmp = CFOptions::new(x.cf, x.options.clone());
+//                cfs_opts_v.push(tmp.options);
+//            }
+//            None => {
+//                cfs_opts_v.push(ColumnFamilyOptions::new());
+//            }
+//        }
     }
-    let cfds = cfs_v.into_iter().zip(cfs_opts_v).collect();
-    let mut db = DB::open_cf(db_opt, path, cfds).unwrap();
-
-    Ok(db)
+    // let cfds = cfs_v.into_iter().zip(cfs_opts_v).collect();
+    DB::open_cf(db_opt, path, cfs_v)
 }
 
 pub fn new_engine_opt(path: &str, opts: DBOptions, cfs_opts: Vec<CFOptions>) -> Result<DB, String> {
