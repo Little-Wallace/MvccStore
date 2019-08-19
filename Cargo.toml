@@ -5,10 +5,13 @@ authors = ["zhangjinpeng1987 <zhangjinpeng@pingcap.com>"]
 edition = "2018"
 
 [dependencies]
-rocksdb = { git = "https://github.com/Little-Wallace/rust-rocksdb.git", branch="mvcc_store"}
+rocksdb = { git = "https://github.com/Little-Wallace/rust-rocksdb.git", branch="mvcc_store" }
 fxhash = "0.2.1"
 indexmap = "1.0.2"
 clap = "2.32"
+
+[dev-dependencies]
+tempdir = "0.3"
 
 [[bin]]
 name = "main"

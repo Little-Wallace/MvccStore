@@ -185,7 +185,7 @@ mod tests {
         ColumnFamilyOptions, DBOptions, EnvOptions, IngestExternalFileOptions, SstFileWriter,
         Writable, DB,
     };
-    use storage::CF_DEFAULT;
+    use super::CF_DEFAULT;
     use tempdir::TempDir;
 
     #[test]

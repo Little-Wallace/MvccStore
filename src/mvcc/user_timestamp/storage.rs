@@ -1,7 +1,6 @@
 
 use std::string::String;
 use std::u64;
-use std::io::Write;
 
 
 use super::super::memstore::MemStore;
@@ -9,14 +8,20 @@ use super::super::{Key, Value};
 use rocksdb::{DB, WriteOptions, ReadOptions, SeekKey, DBOptions};
 use rocksdb::rocksdb_options::{bytes_to_u64, u64_to_bytes};
 use super::super::MvccStorage;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use rocksdb::rocksdb::Writable;
 
 const TIMESTAMP_LEN: usize = 16;
+
+const WRITE_ROLL_BACK: char = 'a';
+const WRITE_COMMIT: char = 'c';
+const ERR_KEY_LOCKED: &str = "key is locked";
+const ERR_KEY_VERSION: &str = "key has been written";
 
 pub struct Storage {
     // Store pre-write result.
     // TODO: add wal for mem_store
-    mem_store: MemStore,
+    mem_store: RwLock<MemStore>,
 
     // Only committed value can write to DB.
     db: DB,
@@ -25,7 +30,7 @@ pub struct Storage {
 impl Storage {
     pub fn new(db: DB) -> Self {
         Self {
-            mem_store: MemStore::new(),
+            mem_store: RwLock::new(MemStore::new()),
             db,
         }
     }
@@ -51,74 +56,94 @@ impl Storage {
         }
         return None;
     }
-}
 
-impl MvccStorage for Storage {
-    fn prewrite(&mut self, key: Key, value: Value, ts: u64) -> Result<(), String> {
-        // TODO: check write conflict
-        if self.mem_store.contains_key(&key) {
-            return Err(String::from("key is locked"));
-        }
-        let mut read_opt = ReadOptions::new();
-        read_opt.set_timestamp(u64::MAX);
-        let ret = self.db.get_opt(&key, &read_opt).unwrap();
-        if let Some(value) = ret {
-            let value = value.to_vec();
-            let commit_ts = decode_commit_ts_from_value(&value);
-            if commit_ts >= ts {
-                return Err(String::from("key has been written"));
+    fn get_uncommitted_data(&self, key: &Key, start_ts: u64) -> Result<Option<Value>, String> {
+        let mut mem_store = self.mem_store.read().unwrap();
+        match mem_store.get(&key) {
+            Some((timestamp, value)) => {
+                if *timestamp == start_ts {
+                    // Pre-write result is ok
+                    Ok(Some(value.clone()))
+                } else {
+                    // Rollback-ed or committed by other txn
+                    Err(String::from("This key was prewrite by other transaction"))
+                }
             }
+            None => Ok(None)
         }
-        if self.mem_store.insert(key, value, ts).is_some() {
-            panic!("key is locked");
-        }
-        Ok(())
     }
 
-    fn commit(&mut self, key: Key, start_ts: u64, commit_ts: u64) -> Result<(), String> {
-        match self.mem_store.remove(&key) {
+    fn unlock_uncommitted_data(&self, key: &Key, start_ts: u64) -> Result<Option<Value>, String> {
+        let mut mem_store = self.mem_store.write().unwrap();
+        match mem_store.remove(&key) {
             Some((timestamp, value)) => {
                 if timestamp == start_ts {
                     // Pre-write result is ok
-                    let mut write_opt = WriteOptions::new();
-                    write_opt.set_timestamp(commit_ts);
-                    let mut v = value;
-                    encode_ts_to_value(commit_ts, &mut v);
-                    encode_ts_to_value(start_ts, &mut v);
-                    self.db.put_opt(&key, &v, &write_opt);
+                    Ok(Some(value))
                 } else {
                     // Rollback-ed or committed by other txn
-                    self.mem_store.insert(key.clone(), value, timestamp);
+                    mem_store.insert(key.clone(), value, timestamp);
+                    Err(String::from("This key was prewrite by other transaction"))
                 }
-                return Ok(());
             }
-            None => {}
+            None => Ok(None)
         }
+    }
+}
 
+impl MvccStorage for Storage {
+    fn prewrite(&self, key: &Key, value: &Value, ts: u64) -> Result<(), String> {
+        // TODO: check write conflict
+        if self.mem_store.read().unwrap().contains_key(&key) {
+            println!("err: lock key");
+            return Err(String::from(ERR_KEY_LOCKED));
+        }
+        let mut read_opt = ReadOptions::new();
+        read_opt.set_timestamp(u64::MAX);
+        let ret = self.db.get_opt(key, &read_opt)?;
+        if let Some(value) = ret {
+            let value = value.to_vec();
+            let commit_ts = decode_commit_ts_from_value(&value);
+            println!("find one key with commit ts: {}, prewrite_ts: {}", commit_ts, ts);
+            if commit_ts >= ts {
+                return Err(String::from(ERR_KEY_VERSION));
+            }
+        }
+        let mut mem_store = self.mem_store.write().unwrap();
+        mem_store.insert(key.clone(), value.clone(), ts);
+        println!("succ: lock key:");
+        Ok(())
+    }
+
+    fn commit(&self, key: &Key, start_ts: u64, commit_ts: u64) -> Result<(), String> {
+        // we should keep key in lock until data has been committed into db.
+        if let Some(value) = self.get_uncommitted_data(&key, start_ts)? {
+            let mut write_opt = WriteOptions::new();
+            write_opt.set_timestamp(commit_ts);
+            let mut v = value;
+            encode_ts_to_value(start_ts, &mut v);
+            encode_ts_to_value(commit_ts, &mut v);
+            self.db.put_opt(&key, &v, &write_opt);
+            self.unlock_uncommitted_data(&key, start_ts).unwrap();
+            return Ok(());
+        }
         // Find to see if it is committed or rollback-ed
-        if let Some(_) = self.get_committed_version(&key, start_ts, commit_ts) {
-            return Err(String::from("committed by other txn"));
+        if let Some(_) = self.get_committed_version(key, start_ts, commit_ts) {
+            return Ok(());
         } else {
             return Err(String::from("rollback-ed by other txn"));
         }
     }
 
-    fn rollback(&mut self, key: Key, ts: u64) -> Result<(), String> {
-        match self.mem_store.remove(&key) {
-            Some((timestamp, value)) => {
-                if timestamp == ts {
-                    // remove key-value from lock store.
-                } else {
-                    // Rollback-ed or committed by other txn
-                    self.mem_store.insert(key, value, timestamp);
-                }
-                return Ok(());
-            }
-            None => {}
+    fn rollback(&self, key: &Key, start_ts: u64) -> Result<(), String> {
+        // when rollback, we could remove key at once
+        if let Some(value) = self.unlock_uncommitted_data(key, start_ts)? {
+            // TODO: write rollback into WRITE_CF
+            return Ok(());
         }
 
         // Find to see if it is committed or rollback-ed
-        if let Some(_) = self.get_committed_version(&key, ts, u64::MAX) {
+        if let Some(_) = self.get_committed_version(key, start_ts, u64::MAX) {
             return Err(String::from("committed by other txn"));
         } else {
             return Err(String::from("rollback-ed by other txn"));
@@ -126,18 +151,18 @@ impl MvccStorage for Storage {
     }
 
     fn get(&self, key: &Key, ts: u64) -> Result<Option<Value>, String> {
-        if let Some((start_ts, _)) = self.mem_store.get(key) {
-            if *start_ts < ts {
-                return Err(String::from("key is locked"));
+        if let Some((start_ts, _)) = self.mem_store.read().unwrap().get(key) {
+            if *start_ts <= ts {
+                return Err(String::from(ERR_KEY_LOCKED));
             }
         }
-
         let mut read_opt = ReadOptions::new();
         read_opt.set_timestamp(ts);
         match self.db.get_opt(key, &read_opt)? {
             Some(v) => {
                 let value = v.to_vec();
-                let res = &value[TIMESTAMP_LEN..].to_owned();
+                let value_len = value.len() - TIMESTAMP_LEN;
+                let res = &value[..value_len].to_owned();
                 Ok(Some(res.clone()))
             }
             None => Ok(None),
@@ -172,17 +197,89 @@ fn encode_ts_to_value(ts: u64, value: &mut Value) {
 }
 
 fn decode_start_ts_from_value(value: &Value) -> u64 {
-    bytes_to_u64(&value[..8])
+    let l = value.len();
+    bytes_to_u64(&value[l-16..l-8])
 }
 
 fn decode_commit_ts_from_value(value: &Value) -> u64 {
-    bytes_to_u64(&value[8..16])
+    let l = value.len();
+    bytes_to_u64(&value[l-8..])
 }
 
 pub fn create_storage(options: DBOptions, path: &str) -> Result<Arc<dyn MvccStorage>, String> {
     let mut option = options;
     option.set_user_timestamp_comparator(8);
-    let db = DB::open(option, path)?;
+    let db = DB::open_opt(option, path)?;
     let storage = Storage::new(db);
     return Ok(Arc::new(storage));
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::path::Path;
+    use std::str;
+    use std::string::String;
+    use std::thread;
+    use tempdir::TempDir;
+    use std::cmp::min;
+    use super::{Value, Key};
+
+
+    fn prewrite(storage: &Arc<dyn MvccStorage>, key: &str, value: &str, ts: u64) -> Result<(), String>{
+        let k = key.as_bytes().to_vec();
+        let v = value.as_bytes().to_vec();
+        storage.prewrite(&k, &v, ts)
+    }
+
+    fn commit(storage: &Arc<dyn MvccStorage>, key: &str, start_ts: u64, commit_ts: u64) -> Result<(), String> {
+        let k = key.as_bytes().to_vec();
+        storage.commit(&k, start_ts, commit_ts)
+    }
+
+    fn read(storage: &Arc<dyn MvccStorage>, key: &str, commit_ts: u64) -> Result<Option<Value>, String> {
+        let k = key.as_bytes().to_vec();
+        storage.get(&k, commit_ts)
+    }
+
+    #[test]
+    fn test_mvcc_prewrite() {
+        let path = TempDir::new("_mvcc_prewrite").expect("");
+        let mut option = DBOptions::new();
+        option.create_if_missing(true);
+        let mut storage = create_storage(option, path.path().to_str().unwrap()).unwrap();
+        prewrite(&storage, "abcd", "v1", 1).unwrap();
+        let e = prewrite(&storage, "abcd", "v2", 1).err().unwrap();
+        assert_eq!(e, ERR_KEY_LOCKED.to_string());
+        commit(&storage, "abcd", 1, 2).unwrap();
+        let value = read(&storage, "abcd", 3).unwrap();
+        let e = prewrite(&storage, "abcd", "v2", 1).err().unwrap();
+        assert_eq!(e, ERR_KEY_VERSION.to_string());
+    }
+
+    #[test]
+    fn test_mvcc_read() {
+        let path = TempDir::new("_mvcc_prewrite").expect("");
+        let mut option = DBOptions::new();
+        option.create_if_missing(true);
+        let mut storage = create_storage(option, path.path().to_str().unwrap()).unwrap();
+        prewrite(&storage, "abcd", "v1", 1).unwrap();
+        let e = read(&storage, "abcd", 1).err().unwrap();
+        assert_eq!(e, ERR_KEY_LOCKED.to_string());
+        let ret= read(&storage, "abcd", 0).unwrap();
+        assert!(ret.is_none());
+        commit(&storage, "abcd", 1, 2).unwrap();
+        let ret = read(&storage, "abcd", 1).unwrap();
+        assert!(ret.is_none());
+        prewrite(&storage, "abcd", "v2", 3).unwrap();
+        let ret = read(&storage, "abcd", 2).unwrap();
+        assert!(ret.is_some());
+        let value = ret.unwrap();
+        assert_eq!(value.as_slice(), "v1".as_bytes());
+        commit(&storage, "abcd", 3, 3).unwrap();
+        let ret = read(&storage, "abcd", 2).unwrap().unwrap();
+        assert_eq!(ret.as_slice(), "v1".as_bytes());
+        let ret = read(&storage, "abcd", u64::MAX).unwrap().unwrap();
+        assert_eq!(ret.as_slice(), "v2".as_bytes());
+    }
 }

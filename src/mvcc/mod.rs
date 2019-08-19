@@ -21,9 +21,9 @@ pub enum StorageType {
 }
 
 pub trait MvccStorage {
-    fn prewrite(&mut self, key: Key, value: Value, start_ts: u64) -> Result<(), String>;
-    fn commit(&mut self, key: Key, start_ts: u64, commit_ts: u64) -> Result<(), String>;
-    fn rollback(&mut self, key: Key, start_ts: u64) -> Result<(), String>;
+    fn prewrite(&self, key: &Key, value: &Value, start_ts: u64) -> Result<(), String>;
+    fn commit(&self, key: &Key, start_ts: u64, commit_ts: u64) -> Result<(), String>;
+    fn rollback(&self, key: &Key, start_ts: u64) -> Result<(), String>;
     fn get(&self, key: &Key, ts: u64) -> Result<Option<Value>, String>;
     fn scan(&self, start: &Key, end: &Key, ts: u64) -> Result<Vec<Value>, String>;
 }

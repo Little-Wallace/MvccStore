@@ -30,10 +30,10 @@ impl Storage {
     }
 }
 impl MvccStorage  for Storage {
-    fn prewrite(&mut self, key: Key, value: Value, ts: u64) -> Result<(), String> {
+    fn prewrite(&self, key: &Key, value: &Value, ts: u64) -> Result<(), String> {
         // TODO: check write conflict
-        let mut m_value = value;
-        let mut m_key = key;
+        let mut m_value = value.clone();
+        let mut m_key = key.clone();
         let lock_cf = self.db.cf_handle(LOCK_CF).unwrap();
         let write_cf = self.db.cf_handle(WRITE_CF).unwrap();
         let options = WriteOptions::new();
@@ -48,7 +48,7 @@ impl MvccStorage  for Storage {
         Ok(())
     }
 
-    fn commit(&mut self, key: Key, start_ts: u64, commit_ts: u64) -> Result<(), String> {
+    fn commit(&self, key: &Key, start_ts: u64, commit_ts: u64) -> Result<(), String> {
         Err(String::from("not support"))
 //        match self.mem_store.remove(key) {
 //            Some((timestamp, value)) => {
@@ -76,7 +76,7 @@ impl MvccStorage  for Storage {
 //        }
     }
 
-    fn rollback(&mut self, key: Key, ts: u64) -> Result<(), String> {
+    fn rollback(&self, key: &Key, ts: u64) -> Result<(), String> {
         // todo
         Err(String::from("not support"))
     }
