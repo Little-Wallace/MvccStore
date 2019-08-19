@@ -10,13 +10,9 @@ use rocksdb::rocksdb_options::{bytes_to_u64, u64_to_bytes};
 use super::super::MvccStorage;
 use std::sync::{Arc, RwLock};
 use rocksdb::rocksdb::Writable;
+use super::super::{ERR_KEY_LOCKED, ERR_KEY_VERSION};
 
 const TIMESTAMP_LEN: usize = 16;
-
-const WRITE_ROLL_BACK: char = 'a';
-const WRITE_COMMIT: char = 'c';
-const ERR_KEY_LOCKED: &str = "key is locked";
-const ERR_KEY_VERSION: &str = "key has been written";
 
 pub struct Storage {
     // Store pre-write result.
@@ -95,7 +91,6 @@ impl MvccStorage for Storage {
     fn prewrite(&self, key: &Key, value: &Value, ts: u64) -> Result<(), String> {
         // TODO: check write conflict
         if self.mem_store.read().unwrap().contains_key(&key) {
-            println!("err: lock key");
             return Err(String::from(ERR_KEY_LOCKED));
         }
         let mut read_opt = ReadOptions::new();
@@ -104,14 +99,12 @@ impl MvccStorage for Storage {
         if let Some(value) = ret {
             let value = value.to_vec();
             let commit_ts = decode_commit_ts_from_value(&value);
-            println!("find one key with commit ts: {}, prewrite_ts: {}", commit_ts, ts);
             if commit_ts >= ts {
                 return Err(String::from(ERR_KEY_VERSION));
             }
         }
         let mut mem_store = self.mem_store.write().unwrap();
         mem_store.insert(key.clone(), value.clone(), ts);
-        println!("succ: lock key:");
         Ok(())
     }
 
@@ -193,7 +186,6 @@ impl MvccStorage for Storage {
 fn encode_ts_to_value(ts: u64, value: &mut Value) {
     let mut v = u64_to_bytes(ts);
     value.append(&mut v);
-
 }
 
 fn decode_start_ts_from_value(value: &Value) -> u64 {
@@ -212,74 +204,4 @@ pub fn create_storage(options: DBOptions, path: &str) -> Result<Arc<dyn MvccStor
     let db = DB::open_opt(option, path)?;
     let storage = Storage::new(db);
     return Ok(Arc::new(storage));
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use std::path::Path;
-    use std::str;
-    use std::string::String;
-    use std::thread;
-    use tempdir::TempDir;
-    use std::cmp::min;
-    use super::{Value, Key};
-
-
-    fn prewrite(storage: &Arc<dyn MvccStorage>, key: &str, value: &str, ts: u64) -> Result<(), String>{
-        let k = key.as_bytes().to_vec();
-        let v = value.as_bytes().to_vec();
-        storage.prewrite(&k, &v, ts)
-    }
-
-    fn commit(storage: &Arc<dyn MvccStorage>, key: &str, start_ts: u64, commit_ts: u64) -> Result<(), String> {
-        let k = key.as_bytes().to_vec();
-        storage.commit(&k, start_ts, commit_ts)
-    }
-
-    fn read(storage: &Arc<dyn MvccStorage>, key: &str, commit_ts: u64) -> Result<Option<Value>, String> {
-        let k = key.as_bytes().to_vec();
-        storage.get(&k, commit_ts)
-    }
-
-    #[test]
-    fn test_mvcc_prewrite() {
-        let path = TempDir::new("_mvcc_prewrite").expect("");
-        let mut option = DBOptions::new();
-        option.create_if_missing(true);
-        let mut storage = create_storage(option, path.path().to_str().unwrap()).unwrap();
-        prewrite(&storage, "abcd", "v1", 1).unwrap();
-        let e = prewrite(&storage, "abcd", "v2", 1).err().unwrap();
-        assert_eq!(e, ERR_KEY_LOCKED.to_string());
-        commit(&storage, "abcd", 1, 2).unwrap();
-        let value = read(&storage, "abcd", 3).unwrap();
-        let e = prewrite(&storage, "abcd", "v2", 1).err().unwrap();
-        assert_eq!(e, ERR_KEY_VERSION.to_string());
-    }
-
-    #[test]
-    fn test_mvcc_read() {
-        let path = TempDir::new("_mvcc_prewrite").expect("");
-        let mut option = DBOptions::new();
-        option.create_if_missing(true);
-        let mut storage = create_storage(option, path.path().to_str().unwrap()).unwrap();
-        prewrite(&storage, "abcd", "v1", 1).unwrap();
-        let e = read(&storage, "abcd", 1).err().unwrap();
-        assert_eq!(e, ERR_KEY_LOCKED.to_string());
-        let ret= read(&storage, "abcd", 0).unwrap();
-        assert!(ret.is_none());
-        commit(&storage, "abcd", 1, 2).unwrap();
-        let ret = read(&storage, "abcd", 1).unwrap();
-        assert!(ret.is_none());
-        prewrite(&storage, "abcd", "v2", 3).unwrap();
-        let ret = read(&storage, "abcd", 2).unwrap();
-        assert!(ret.is_some());
-        let value = ret.unwrap();
-        assert_eq!(value.as_slice(), "v1".as_bytes());
-        commit(&storage, "abcd", 3, 3).unwrap();
-        let ret = read(&storage, "abcd", 2).unwrap().unwrap();
-        assert_eq!(ret.as_slice(), "v1".as_bytes());
-        let ret = read(&storage, "abcd", u64::MAX).unwrap().unwrap();
-        assert_eq!(ret.as_slice(), "v2".as_bytes());
-    }
 }

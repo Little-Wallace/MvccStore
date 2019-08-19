@@ -1,12 +1,9 @@
-
-use std::cmp;
-use std::fs::{self, File};
+use std::fs::{self};
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use rocksdb::{
-    ColumnFamilyOptions, DBCompressionType, DBOptions, Env, SliceTransform, DB, WriteOptions,
+    ColumnFamilyOptions, DBCompressionType, DBOptions, SliceTransform, DB,
 };
 use super::super::mvcc::CF_DEFAULT;
 // use util::file::{calc_crc32, copy_and_sync};
@@ -14,7 +11,7 @@ use super::super::mvcc::CF_DEFAULT;
 pub use rocksdb::CFHandle;
 
 pub const LOCK_CF: &str = "lock";
-pub const DATA_CF: &str = "data";
+pub const DATA_CF: &str = "default";
 pub const WRITE_CF: &str = "write";
 
 
@@ -187,6 +184,8 @@ mod tests {
     };
     use super::CF_DEFAULT;
     use tempdir::TempDir;
+    use std::str::FromStr;
+    use std::cmp;
 
     #[test]
     fn test_check_and_open() {
@@ -220,7 +219,7 @@ mod tests {
             CFOptions::new("cf_dynamic_level_bytes", ColumnFamilyOptions::new()),
         ];
         {
-            let mut db = check_and_open(path_str, DBOptions::new(), cfs_opts).unwrap();
+            let db = check_and_open(path_str, DBOptions::new(), cfs_opts).unwrap();
             column_families_must_eq(path_str, vec![CF_DEFAULT, "cf_dynamic_level_bytes"]);
         }
 

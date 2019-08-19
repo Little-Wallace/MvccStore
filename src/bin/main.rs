@@ -1,4 +1,5 @@
-use mvccstore::mvcc::{create_default_storage, StorageType};
+use mvccstore::mvcc::storage::create_storage;
+use mvccstore::mvcc::StorageType;
 use clap::{App, Arg};
 
 fn main() {
@@ -30,6 +31,6 @@ fn main() {
         "tikv" => StorageType::TiKVStorage,
         _ => StorageType::Unknown
     };
-    let storage = create_default_storage(path, storage_type).unwrap();
+    let _storage = create_storage(path, storage_type).unwrap();
     println!("Hello, world!");
 }

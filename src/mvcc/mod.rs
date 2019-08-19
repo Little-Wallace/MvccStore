@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use rocksdb::DBOptions;
 
 pub mod user_timestamp;
 pub mod tikv;
 pub mod unistore;
 pub mod memstore;
+pub mod storage;
 
 type Key = Vec<u8>;
 type Value = Vec<u8>;
@@ -12,6 +12,8 @@ type Value = Vec<u8>;
 pub type CfName = &'static str;
 pub const CF_DEFAULT: CfName = "default";
 pub const CF_OLD: CfName = "old";
+pub const ERR_KEY_LOCKED: &str = "key is locked";
+pub const ERR_KEY_VERSION: &str = "key has been written";
 
 pub enum StorageType {
     UserTimestampStorage,
@@ -28,12 +30,3 @@ pub trait MvccStorage {
     fn scan(&self, start: &Key, end: &Key, ts: u64) -> Result<Vec<Value>, String>;
 }
 
-pub fn create_default_storage(path: &str, storage_type: StorageType) -> Result<Arc<dyn MvccStorage>, String> {
-    match storage_type {
-        StorageType::UserTimestampStorage => {
-            let option = DBOptions::default();
-            return user_timestamp::create_storage(option, path);
-        },
-        _ => Err(String::from("no support type to create"))
-    }
-}
