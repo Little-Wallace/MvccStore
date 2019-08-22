@@ -22,7 +22,7 @@ pub enum StorageType {
     Unknown,
 }
 
-pub trait MvccStorage {
+pub trait MvccStorage: Sync + Send {
     fn prewrite(&self, key: &Key, value: &Value, start_ts: u64) -> Result<(), String>;
     fn commit(&self, key: &Key, start_ts: u64, commit_ts: u64) -> Result<(), String>;
     fn rollback(&self, key: &Key, start_ts: u64) -> Result<(), String>;

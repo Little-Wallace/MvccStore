@@ -9,6 +9,7 @@ rocksdb = { git = "https://github.com/Little-Wallace/rust-rocksdb.git", branch="
 fxhash = "0.2.1"
 indexmap = "1.0.2"
 clap = "2.32"
+rand = "0.6.5"
 
 [dev-dependencies]
 tempdir = "0.3"

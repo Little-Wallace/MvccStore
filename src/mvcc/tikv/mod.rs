@@ -167,3 +167,14 @@ pub fn create_storage(options: DBOptions, path: &str) -> Result<Arc<dyn MvccStor
     let storage = Storage::new(db);
     return Ok(Arc::new(storage));
 }
+
+pub fn create_storage_cf(options: DBOptions, path: &str, cfds: Vec<(&str, ColumnFamilyOptions)>) -> Result<Arc<dyn MvccStorage>, String> {
+    let mut cfds = cfds;
+    for (_, cf) in cfds.iter_mut() {
+        let f = Box::new(FixedSuffixSliceTransform::new(8));
+        cf.set_prefix_extractor("FixedSuffixSliceTransform", f).unwrap();
+    }
+    let mut db = DB::open_cf(options, path, cfds)?;
+    let storage = Storage::new(db);
+    return Ok(Arc::new(storage));
+}

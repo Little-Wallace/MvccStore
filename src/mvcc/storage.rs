@@ -1,21 +1,37 @@
-use rocksdb::DBOptions;
+use rocksdb::{DBOptions, ColumnFamilyOptions};
 use super::StorageType;
 use std::sync::Arc;
 use super::user_timestamp::create_storage as create_ts_storage;
+use super::user_timestamp::create_storage_cf as create_ts_storage_cf;
 use super::tikv::create_storage as create_tikv_storage;
+use super::tikv::create_storage_cf as create_tikv_storage_cf;
 use super::MvccStorage;
 
-pub fn create_storage(path: &str, storage_type: StorageType) -> Result<Arc<dyn MvccStorage>, String> {
+pub fn create_storage_opt(path: &str, storage_type: StorageType, option: DBOptions) -> Result<Arc<dyn MvccStorage>, String> {
     match storage_type {
         StorageType::UserTimestampStorage => {
-            let mut option = DBOptions::default();
-            option.create_if_missing(true);
             return create_ts_storage(option, path);
         },
         StorageType::TiKVStorage => {
-            let mut option = DBOptions::default();
-            option.create_if_missing(true);
             return create_tikv_storage(option, path);
+        }
+        _ => Err(String::from("no support type to create"))
+    }
+}
+
+pub fn create_storage(path: &str, storage_type: StorageType) -> Result<Arc<dyn MvccStorage>, String> {
+    let mut option = DBOptions::default();
+    option.create_if_missing(true);
+    return create_storage_opt(path, storage_type, option);
+}
+
+pub fn create_storage_cf(path: &str, storage_type: StorageType, option: DBOptions, cfds: Vec<(&str, ColumnFamilyOptions)>) -> Result<Arc<dyn MvccStorage>, String> {
+    match storage_type {
+        StorageType::UserTimestampStorage => {
+            return create_ts_storage_cf(option, path, cfds);
+        },
+        StorageType::TiKVStorage => {
+            return create_tikv_storage_cf(option, path, cfds);
         }
         _ => Err(String::from("no support type to create"))
     }

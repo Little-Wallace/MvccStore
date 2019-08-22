@@ -5,7 +5,7 @@ use std::u64;
 
 use super::super::memstore::MemStore;
 use super::super::{Key, Value};
-use rocksdb::{DB, WriteOptions, ReadOptions, SeekKey, DBOptions};
+use rocksdb::{DB, WriteOptions, ReadOptions, SeekKey, DBOptions, ColumnFamilyOptions};
 use rocksdb::rocksdb_options::{bytes_to_u64, u64_to_bytes};
 use super::super::MvccStorage;
 use std::sync::{Arc, RwLock};
@@ -202,6 +202,16 @@ pub fn create_storage(options: DBOptions, path: &str) -> Result<Arc<dyn MvccStor
     let mut option = options;
     option.set_user_timestamp_comparator(8);
     let db = DB::open_opt(option, path)?;
+    let storage = Storage::new(db);
+    return Ok(Arc::new(storage));
+}
+
+pub fn create_storage_cf(options: DBOptions, path: &str, cfds: Vec<(&str, ColumnFamilyOptions)>) -> Result<Arc<dyn MvccStorage>, String> {
+    let mut cfds = cfds;
+    for (_, cf) in cfds.iter_mut() {
+        cf.set_timestamp_comparator(8);
+    }
+    let db = DB::open_cf(options, path, cfds)?;
     let storage = Storage::new(db);
     return Ok(Arc::new(storage));
 }
